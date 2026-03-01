@@ -1,0 +1,362 @@
+.TH QUANTIZE-LLMC 1 "2026-03-01" "model-quantizer" "User Commands"
+.SH NAME
+quantize-llmc \- quantize models using vLLM's LLM Compressor
+.SH SYNOPSIS
+.B quantize-llmc
+.RB [ \-\-json ]
+.I model-id-or-path
+.RI [ scheme ]
+.RB [ options ]
+.SH DESCRIPTION
+.B quantize-llmc
+quantizes a Hugging Face model using the LLM Compressor
+.RB ( llmcompressor )
+library. Output is a
+.B compressed-tensors
+checkpoint that vLLM can load directly.
+.PP
+Four quantization schemes are supported:
+.TP
+.B fp8
+FP8 quantization (data-free by default). Uses
+.B QuantizationModifier
+with the
+.B FP8_DYNAMIC
+or
+.B FP8_BLOCK
+scheme. Optionally supports model-free PTQ pathway.
+.TP
+.B gptq
+W4A16 GPTQ quantization (calibration-based). Uses
+.BR GPTQModifier .
+.TP
+.B w8a8
+W8A8 SmoothQuant + GPTQ quantization (calibration-based). Uses
+.B SmoothQuantModifier
+followed by
+.BR GPTQModifier .
+.TP
+.B nvfp4
+NVFP4 quantization (calibration-based). Uses
+.B QuantizationModifier
+with the
+.B NVFP4
+scheme.
+.PP
+The tool operates offline by default. Network access can be enabled with
+.BR \-\-online .
+.PP
+Before quantizing, the tool checks for at least 512 MB of free GPU VRAM. If
+insufficient memory is available, it exits with an error.
+.PP
+Concurrent runs are serialized via
+.BR flock (1)
+on a per-output lockfile.
+.SH OPTIONS
+.SS "Quantization Options"
+.TP
+.BI \-\-fp8\-scheme " NAME"
+FP8 scheme:
+.B dynamic
+or
+.BR block .
+Default:
+.BR dynamic .
+Maps to
+.B FP8_DYNAMIC
+or
+.BR FP8_BLOCK .
+.TP
+.BI \-\-fp8\-pathway " NAME"
+FP8 pathway:
+.B oneshot
+or
+.BR model_free .
+Default:
+.BR oneshot .
+The
+.B model_free
+pathway requires a local model path and llmcompressor >= 0.9.0.
+.TP
+.BI \-\-ignore " LIST"
+Extra layer name patterns to exclude from quantization (comma-separated).
+May be repeated. The
+.B lm_head
+layer is always excluded.
+.TP
+.BI \-\-model\-free\-device " STR"
+Device for
+.B model_free_ptq
+pathway. Default:
+.BR cuda:0 .
+.TP
+.BI \-\-model\-free\-workers " N"
+Worker count for
+.B model_free_ptq
+pathway. Default:
+.BR 8 .
+.SS "Calibration Options"
+These apply to schemes that require calibration (gptq, w8a8, nvfp4):
+.TP
+.BI \-\-num\-samples " N"
+Number of calibration samples. Default:
+.BR 512 .
+.TP
+.BI \-\-seq\-length " N"
+Maximum sequence length for calibration. Default:
+.BR 2048 .
+.TP
+.BI \-\-batch\-size " N"
+Calibration batch size. Default:
+.BR 1 .
+.TP
+.BI \-\-dataset " NAME"
+HF dataset identifier for calibration. Default:
+.BR open_platypus .
+.TP
+.BI \-\-dataset\-config " NAME"
+HF dataset config name (optional).
+.TP
+.BI \-\-dataset\-path " PATH"
+Local dataset path. Accepts a file (.json, .jsonl, .csv, .parquet), a
+directory containing one of those types, or a
+.B dvc://
+URI. For local files, the dataset is loaded via the
+.B datasets
+library.
+.TP
+.BI \-\-text\-column " KEY"
+Dataset text column name. Default:
+.BR text .
+.TP
+.B \-\-no\-shuffle
+Do not shuffle calibration samples.
+.TP
+.BI \-\-seed " N"
+RNG seed for reproducibility. Default:
+.BR 1234 .
+.SS "Pipeline Options"
+.TP
+.BI \-\-pipeline " NAME"
+Oneshot pipeline type:
+.BR basic ", " datafree ", " sequential ", or " independent .
+Default: llmcompressor's internal default.
+.TP
+.BI \-\-sequential\-targets " LIST"
+Comma-separated list of decoder layer class names for sequential
+processing.
+.TP
+.BI \-\-sequential\-offload " DEVICE"
+Offload device between sequential layers. Default:
+.BR cpu .
+.TP
+.B \-\-no\-qac
+Disable quantization-aware calibration.
+.SS "Streaming and Dataset Workers"
+.TP
+.B \-\-streaming
+Stream the dataset (only for hub ID or dvc:// paths; requires
+.BR \-\-online ).
+.TP
+.BI \-\-splits " SPEC"
+Split percentages specification passed to
+.BR oneshot .
+.TP
+.BI \-\-preprocessing\-workers " N"
+Dataset preprocessing workers. Unset by default.
+.TP
+.BI \-\-dataloader\-workers " N"
+DataLoader workers. Default:
+.BR 0 .
+.SS "Model and Cache Options"
+.TP
+.BI \-\-model\-revision " REV"
+HF model revision (branch, tag, or commit hash). Default:
+.BR main .
+.TP
+.B \-\-use\-auth\-token
+Use Hugging Face authentication (for private repositories).
+.TP
+.B \-\-trust\-remote\-code
+Allow custom code from the model repository.
+.TP
+.B \-\-online
+Allow network access (default: offline).
+.SS "Output and Validation Options"
+.TP
+.BI \-\-suffix " STR"
+Override the output model ID suffix. Defaults are scheme-dependent:
+.BR \-FP8\-DYNAMIC ", " \-FP8\-BLOCK ", " \-W4A16\-GPTQ ", " \-W8A8\-SQ\-GPTQ ", " \-NVFP4 .
+.TP
+.B \-\-force
+Overwrite existing output.
+.TP
+.BI \-\-lock\-timeout " SECONDS"
+Lock wait time for concurrent runs.
+.B 0
+means fail immediately if locked (default).
+.B \-1
+waits without limit.
+.TP
+.B \-\-validate
+After quantization, load the output in vLLM and run smoke test prompts.
+Runs in a separate process to avoid VRAM residue.
+.TP
+.BI \-\-validate\-prompt " TEXT"
+Prompt for the validation smoke test. Default:
+.BR Hello! .
+.TP
+.BI \-\-validate\-suite " PATH"
+Path to a JSONL or plain-text file with prompts for a regression suite.
+JSONL schema per line (all fields optional):
+.BR "{\(dqprompt\(dq: \(dq...\(dq, \(dqmax_tokens\(dq: 64, \(dqmin_chars\(dq: 1, \(dqmust_contain\(dq: [\(dq...\(dq]}" .
+.TP
+.BI \-\-validate\-seed " N"
+Seed for vLLM sampling during validation. Default:
+.BR 1 .
+.TP
+.BI \-\-validate\-max\-tokens " N"
+Maximum tokens per prompt during validation. Default:
+.BR 64 .
+.TP
+.BI \-\-validate\-min\-chars " N"
+Minimum output characters to count as a pass. Default:
+.BR 1 .
+.TP
+.BI \-\-log\-dir " PATH"
+LLM Compressor log directory (optional).
+.TP
+.B \-\-json
+JSON output mode. Progress is sent to stderr; a single JSON result object is
+printed on stdout.
+.SH ENVIRONMENT
+.TP
+.B MODEL_CACHE_DIR
+HF cache root. Default:
+.BR ./models .
+.TP
+.B QUANTIZED_OUTPUT_DIR
+Output root. Default: same as
+.BR MODEL_CACHE_DIR .
+.TP
+.B WRITE_LOCAL_REPO_LAYOUT
+Set to
+.B 1
+for HF-cache-shaped output layout
+.RB ( hub/models\-\-\fI...\fP/snapshots/\fIhash\fP
+with refs). Default:
+.BR 0 .
+.SH OUTPUT
+Output depends on the
+.B WRITE_LOCAL_REPO_LAYOUT
+setting:
+.PP
+Plain layout (default, slashes in model ID are replaced with
+.BR \-\- ):
+.RS
+.nf
+$QUANTIZED_OUTPUT_DIR/<model-id-slug><suffix>/
+  config.json
+  *.safetensors
+  tokenizer files
+  quantize_info.json
+.fi
+.RE
+.PP
+Cache-shaped layout (WRITE_LOCAL_REPO_LAYOUT=1):
+.RS
+.nf
+$QUANTIZED_OUTPUT_DIR/hub/models--<model-id-slug><suffix>/
+  refs/main
+  snapshots/<hash>/
+    (same files as above)
+.fi
+.RE
+.PP
+.B quantize_info.json
+records the source model, scheme, versions, calibration parameters, and
+runtime metadata.
+.PP
+The default output suffix depends on the scheme:
+.TP
+.B fp8 (dynamic)
+\-FP8\-DYNAMIC
+.TP
+.B fp8 (block)
+\-FP8\-BLOCK
+.TP
+.B gptq
+\-W4A16\-GPTQ
+.TP
+.B w8a8
+\-W8A8\-SQ\-GPTQ
+.TP
+.B nvfp4
+\-NVFP4
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or output already exists.
+.TP
+.B 1
+Error from the bash layer or an unhandled Python exception. The shell
+.B die()
+handler exits 1 for: unknown options, missing model-id, unknown scheme,
+invalid integer arguments, missing
+.BR flock (1),
+lock contention, and streaming-in-offline-mode. The VRAM preflight check
+(a Python subprocess) also exits 1 on failure. Unhandled Python exceptions
+(e.g.,
+.BR RuntimeError )
+propagate as exit code 1.
+.TP
+.B 2
+Python preflight or sanity-check error: missing dependencies, version too
+old, offline model/dataset not cached, output sanity check failure (missing
+config.json or weight files).
+.TP
+.B 3
+Validation failure (vLLM smoke test did not pass). Only returned when
+.B \-\-validate
+is used.
+.SH EXAMPLES
+FP8 dynamic quantization (data-free, default):
+.PP
+.RS
+.nf
+quantize-llmc meta-llama/Llama-3.1-8B
+.fi
+.RE
+.PP
+GPTQ W4A16 with custom calibration:
+.PP
+.RS
+.nf
+quantize-llmc meta-llama/Llama-3.1-8B gptq \\
+  --num-samples 256 --seq-length 4096 \\
+  --dataset-path ./calib-data.jsonl
+.fi
+.RE
+.PP
+W8A8 SmoothQuant with online access and validation:
+.PP
+.RS
+.nf
+quantize-llmc --online --validate \\
+  meta-llama/Llama-3.1-70B w8a8
+.fi
+.RE
+.PP
+NVFP4 with JSON output and sequential pipeline:
+.PP
+.RS
+.nf
+quantize-llmc --json --pipeline sequential \\
+  --sequential-targets LlamaDecoderLayer \\
+  meta-llama/Llama-3.1-70B nvfp4
+.fi
+.RE
+.SH SEE ALSO
+.BR quantize-awq (1),
+.BR quantize-fp8 (1),
+.BR list-models (1)

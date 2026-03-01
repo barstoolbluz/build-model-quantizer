@@ -1,0 +1,112 @@
+.TH LIST-MODELS 1 "2026-03-01" "model-quantizer" "User Commands"
+.SH NAME
+list-models \- list cached Hugging Face models with size and quantization info
+.SH SYNOPSIS
+.B list-models
+.RI [ cache-dir ]
+.SH DESCRIPTION
+.B list-models
+scans the Hugging Face cache directory and prints each cached model with its
+disk size, snapshot count, and detected quantization type (if any).
+.PP
+Models are discovered by scanning for
+.B models\-\-*
+directories under the
+.B hub/
+subdirectory of the cache root.
+.SH OPTIONS
+.TP
+.I cache-dir
+HF cache root directory to scan. Default:
+.B $MODEL_CACHE_DIR
+or
+.BR ./models .
+.TP
+.BR \-h ", " \-\-help
+Print usage information and exit.
+.SH ENVIRONMENT
+.TP
+.B MODEL_CACHE_DIR
+Default cache directory. Overridden by the positional
+.I cache-dir
+argument. Default:
+.BR ./models .
+.SH OUTPUT
+A header line is printed first, followed by a blank line:
+.PP
+.RS
+.nf
+Model cache: \fI/path/to/cache\fP
+
+.fi
+.RE
+.PP
+Then one indented line per model in the format:
+.PP
+.RS
+.nf
+  \fIorg/model-name\fP  (\fIsize\fP, \fIN\fP snapshot(s)) [\fIquant-type\fP]
+.fi
+.RE
+.PP
+The quantization type tag is detected from
+.B config.json
+in the first snapshot directory (by glob order). Detected types:
+.TP
+.B [compressed-tensors]
+LLM Compressor / compressed-tensors format (vLLM native).
+.TP
+.B [AWQ]
+Activation-aware weight quantization.
+.TP
+.B [FP8-TORCHAO]
+TorchAO quantization (detected via
+.B quant_method
+containing "torchao" in config.json).
+.TP
+.B [quantized]
+Other quantization (detected via
+.B quant_type
+or
+.B quantization_config
+in config.json).
+.PP
+If no models are cached, prints
+.BR "(no models cached)" .
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B >0
+Unexpected error (the script uses
+.BR "set -euo pipefail" ,
+so any command failure causes a non-zero exit).
+.SH EXAMPLES
+List models in the default cache:
+.PP
+.RS
+.nf
+list-models
+.fi
+.RE
+.PP
+List models in a custom cache directory:
+.PP
+.RS
+.nf
+list-models /data/hf-cache
+.fi
+.RE
+.PP
+Use with an environment variable:
+.PP
+.RS
+.nf
+MODEL_CACHE_DIR=/mnt/shared/models list-models
+.fi
+.RE
+.SH SEE ALSO
+.BR quantize-awq (1),
+.BR quantize-fp8 (1),
+.BR quantize-llmc (1)

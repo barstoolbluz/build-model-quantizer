@@ -1,0 +1,316 @@
+.TH QUANTIZE-AWQ 1 "2026-03-01" "model-quantizer" "User Commands"
+.SH NAME
+quantize-awq \- quantize a Hugging Face model to AWQ format
+.SH SYNOPSIS
+.B quantize-awq
+.RB [ \-\-json ]
+.RB [ \-\-smoke\-test " {" full | fast | off }]
+.I model-id
+.RI [ bits ]
+.RI [ group-size ]
+.SH DESCRIPTION
+.B quantize-awq
+performs activation-aware weight quantization (AWQ) on a Hugging Face causal
+language model using the AutoAWQ library. The quantized model is saved in a
+deterministic, content-addressed output directory.
+.PP
+The tool operates offline by default (no network access). It requires a
+pre-cached model in the HF cache directory. CUDA is required by default
+but can be disabled.
+.PP
+If a complete output already exists for the same parameters, the tool exits
+successfully without re-quantizing (unless
+.B FORCE_REQUANTIZE=1
+is set).
+.PP
+Output integrity is verified via a fingerprint-based snapshot ID and an
+optional smoke test (forward pass + tiny generation).
+.PP
+When targeting a GPU device, the tool checks for at least 512 MB of free
+VRAM before proceeding. If insufficient memory is available, it exits with
+an error suggesting
+.BR DEVICE_MAP=cpu .
+.SH OPTIONS
+.TP
+.B \-\-json
+JSON output mode. Progress is sent to stderr; a single JSON object is
+printed on stdout upon completion.
+.TP
+.BI \-\-smoke\-test " mode"
+Validation mode after quantization. Accepted values:
+.RS
+.TP
+.B full
+Reload saved artifact from disk and run a forward pass plus tiny generate
+(default).
+.TP
+.B fast
+Run forward pass and tiny generate on the in-memory model immediately
+after quantization (skips reload).
+.TP
+.B off
+Skip forward/generate checks. Structural file checks still run.
+.RE
+.TP
+.I model-id
+Required. Hugging Face model identifier (e.g.,
+.BR meta-llama/Llama-3.1-8B ).
+.TP
+.I bits
+Quantization bit width. Integer between 2 and 8. Default:
+.BR 4 .
+.TP
+.I group-size
+Quantization group size. Positive integer. Default:
+.BR 128 .
+.SH ENVIRONMENT
+.TP
+.B MODEL_CACHE_DIR
+Base HF cache directory. Default:
+.BR ./models .
+.TP
+.B QUANTIZED_OUTPUT_DIR
+Base output directory. Default:
+.BR $MODEL_CACHE_DIR/quantized .
+.TP
+.B MODEL_REVISION
+HF revision (tag, branch, or 40-hex commit). Default:
+.BR main .
+.TP
+.B HF_OFFLINE
+Set to
+.B 1
+for cache-only loads (no network). Default:
+.BR 1 .
+.TP
+.B TRUST_REMOTE_CODE
+Set to
+.B 1
+to enable
+.B trust_remote_code
+when loading models. Default:
+.BR 0 .
+.TP
+.B FORCE_REQUANTIZE
+Set to
+.B 1
+to remove existing output and re-quantize. Default:
+.BR 0 .
+.TP
+.B SHOW_SIZES
+Set to
+.B 1
+to print source/output size statistics. Default:
+.BR 0 .
+.TP
+.B PYTHON
+Python executable to use. Default:
+.BR python3 .
+.TP
+.B REQUIRE_CUDA
+Set to
+.B 1
+to fail if CUDA is unavailable. Default:
+.BR 1 .
+.TP
+.B DEVICE_MAP
+Device mapping strategy:
+.BR auto ", " cuda0 ", or " cpu .
+Default: auto-detected (cuda0 if CUDA available, else cpu).
+.TP
+.B WRITE_LOCAL_REPO_LAYOUT
+Set to
+.B 1
+to write output in HF cache-shaped layout
+.RB ( hub/models\-\-\fI...\fP/snapshots/\fIhash\fP ).
+Default:
+.BR 0
+(plain directory layout).
+.TP
+.B LOCK_TIMEOUT_SECONDS
+Seconds to wait for the output lock. 0 means fail immediately if locked.
+Default:
+.BR 0 .
+.TP
+.B LOCK_METHOD
+Lock mechanism:
+.BR auto ", " flock ", or " mkdir .
+Default:
+.BR auto .
+.TP
+.B LOCK_STALE_SECONDS
+If greater than 0, stale lock directories older than this many seconds can
+be removed when the owning PID is dead, or when the PID has been reused
+(detected via
+.B /proc/$pid/stat
+start-time mismatch on Linux). Default:
+.BR 0 .
+.TP
+.B ALLOW_REMOTE_STALE
+Set to
+.B 1
+to allow stale-lock cleanup across hosts on shared storage. Default:
+.BR 0 .
+.TP
+.B AWQ_CALIB_DATASET
+Calibration dataset name (string). Passed to AutoAWQ if set.
+.TP
+.B AWQ_MAX_CALIB_SAMPLES
+Maximum calibration samples (integer). Passed to AutoAWQ if set.
+.TP
+.B AWQ_MAX_CALIB_SEQ_LEN
+Maximum calibration sequence length (integer). Passed to AutoAWQ if set.
+.TP
+.B AWQ_N_PARALLEL_CALIB_SAMPLES
+Parallel calibration samples (integer). Passed to AutoAWQ if set.
+.TP
+.B AWQ_CALIB_SAMPLES
+Back-compat alias for
+.BR AWQ_MAX_CALIB_SAMPLES .
+.TP
+.B AWQ_CALIB_SEQ_LEN
+Back-compat alias for
+.BR AWQ_MAX_CALIB_SEQ_LEN .
+.TP
+.B QUANT_SEED
+RNG seed for reproducibility (non-negative integer). Default:
+.BR 1337 .
+.TP
+.B DETERMINISTIC
+Set to
+.B 1
+to request deterministic CUDA algorithms. Default:
+.BR 0 .
+.TP
+.B DETERMINISTIC_FAIL_CLOSED
+Set to
+.B 1
+to make determinism setup errors fatal (0 logs warning and continues).
+Default:
+.BR 1 .
+.TP
+.B QUANT_SHARD_SIZE
+Shard size for
+.BR save_quantized .
+Default:
+.BR 5GB .
+.TP
+.B QUANT_SAFETENSORS
+Set to
+.B 1
+to save in safetensors format. Default:
+.BR 1 .
+.TP
+.B SMOKE_TEST_MODE
+Same as
+.B \-\-smoke\-test
+flag. Default:
+.BR full .
+.TP
+.B WRITE_CHECKSUMS
+Set to
+.B 1
+to write
+.B FILES_SHA256.json
+in the output. Default:
+.BR 0 .
+.TP
+.B WRITE_WEIGHT_CHECKSUMS
+Set to
+.B 1
+to include weight shard checksums (requires WRITE_CHECKSUMS=1). Default:
+.BR 0 .
+.TP
+.B FINGERPRINT_INCLUDE_VERS
+Set to
+.B 1
+to include torch/transformers/awq versions in the fingerprint. Default:
+.BR 1 .
+.TP
+.B FINGERPRINT_INCLUDE_SYS
+Set to
+.B 1
+to include host/system info in the fingerprint. Default:
+.BR 0 .
+.SH OUTPUT
+Output is written to a content-addressed directory under
+.BR QUANTIZED_OUTPUT_DIR .
+The directory structure depends on
+.BR WRITE_LOCAL_REPO_LAYOUT :
+.PP
+Plain layout (default, slashes in model ID are replaced with
+.BR \-\- ):
+.RS
+.nf
+$QUANTIZED_OUTPUT_DIR/<model-id-slug>-AWQ/<snapshot-hash>/
+  config.json
+  *.safetensors (or *.bin)
+  tokenizer_config.json
+  tokenizer.json (or tokenizer.model)
+  awq_quantize_meta.json
+  FINGERPRINT.json
+  FILES_SHA256.json        (if WRITE_CHECKSUMS=1)
+.fi
+.RE
+.PP
+Cache-shaped layout (WRITE_LOCAL_REPO_LAYOUT=1):
+.RS
+.nf
+$QUANTIZED_OUTPUT_DIR/hub/models--<model-id-slug>-AWQ/
+  refs/<revision>
+  snapshots/<snapshot-hash>/
+    (same files as above)
+.fi
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or output already exists and is complete.
+.TP
+.B 1
+Error. Covers configuration errors (missing dependencies, CUDA unavailable,
+lock busy, invalid bits/group-size), runtime failures, and smoke test
+failures. The
+.B die()
+handler exits 1 for all bash-level errors.
+.TP
+.B 2
+Missing required positional argument (no model-id provided).
+.SH EXAMPLES
+Quantize a model with default settings (4-bit, group-size 128):
+.PP
+.RS
+.nf
+quantize-awq meta-llama/Llama-3.1-8B
+.fi
+.RE
+.PP
+Quantize to 3-bit with group-size 64 and JSON output:
+.PP
+.RS
+.nf
+quantize-awq --json meta-llama/Llama-3.1-8B 3 64
+.fi
+.RE
+.PP
+Quantize with custom calibration settings:
+.PP
+.RS
+.nf
+AWQ_MAX_CALIB_SAMPLES=256 AWQ_MAX_CALIB_SEQ_LEN=4096 \\
+  quantize-awq meta-llama/Llama-3.1-70B
+.fi
+.RE
+.PP
+Force re-quantization with checksums:
+.PP
+.RS
+.nf
+FORCE_REQUANTIZE=1 WRITE_CHECKSUMS=1 \\
+  quantize-awq --smoke-test fast meta-llama/Llama-3.1-8B
+.fi
+.RE
+.SH SEE ALSO
+.BR quantize-fp8 (1),
+.BR quantize-llmc (1),
+.BR list-models (1)

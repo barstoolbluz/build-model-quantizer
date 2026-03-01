@@ -1,0 +1,237 @@
+.TH QUANTIZE-FP8 1 "2026-03-01" "model-quantizer" "User Commands"
+.SH NAME
+quantize-fp8 \- convert a Hugging Face model to FP8 weight-only quantization via TorchAO
+.SH SYNOPSIS
+.B quantize-fp8
+.RB [ \-\-json ]
+.I model-id
+.RB [ options ]
+.SH DESCRIPTION
+.B quantize-fp8
+performs FP8 E4M3FN weight-only quantization on a Hugging Face causal language
+model using
+.BR torchao.quantization.Float8WeightOnlyConfig .
+This is a data-free quantization method (no calibration dataset required).
+.PP
+The quantized checkpoint is saved under an HF-cache-like layout with a
+deterministic snapshot ID derived from the model, commit, and configuration.
+.PP
+The tool operates offline by default. Network access can be enabled with
+.BR \-\-online .
+If a complete output already exists for the same parameters, the tool exits
+successfully without re-quantizing (unless
+.B \-\-force
+is passed).
+.PP
+When targeting a GPU device, the tool checks for at least 512 MB of free
+VRAM before proceeding. If insufficient memory is available, it exits with
+an error suggesting
+.BR "\-\-device cpu" .
+.SH OPTIONS
+.TP
+.BI \-c " DIR" "\fR,\fP \-\-cache\-dir " DIR
+HF cache root directory. Default:
+.B $MODEL_CACHE_DIR
+or
+.BR ./models .
+.TP
+.BI \-o " DIR" "\fR,\fP \-\-output\-dir " DIR
+Output root directory. Default:
+.B $QUANTIZED_OUTPUT_DIR
+or same as cache dir.
+.TP
+.BI \-r " REV" "\fR,\fP \-\-revision " REV
+HF revision to load (branch, tag, or commit hash). Default:
+.BR main .
+.TP
+.BI \-\-device " MODE"
+Device mode:
+.BR auto ", " cpu ", or " cuda .
+Default:
+.BR auto .
+.TP
+.B \-\-online
+Allow network access (default: offline).
+.TP
+.B \-\-trust\-remote\-code
+Allow custom code from the model repository.
+.TP
+.B \-\-force
+Rebuild even if a matching snapshot already exists. The old snapshot is
+backed up during the build and removed on success.
+.TP
+.BI \-\-suffix " STR"
+Output model ID suffix. Default:
+.BR \-FP8\-TORCHAO .
+.TP
+.BI \-\-format " FMT"
+Checkpoint format:
+.B torch
+or
+.BR safetensors .
+Default:
+.BR torch .
+.TP
+.B \-\-allow\-safetensors
+Enable safetensors output; implies
+.BR "\-\-format safetensors" .
+Experimental.
+.TP
+.B \-\-offline\-pick\-latest
+In offline mode, if refs are missing, pick the newest cached snapshot.
+.TP
+.B \-\-no\-validate
+Skip structural validation of the output checkpoint.
+.TP
+.B \-\-no\-validate\-quant
+Skip quantization coverage validation (checking that Linear layers were
+quantized).
+.TP
+.BI \-\-quant\-min\-ratio " FLOAT"
+Minimum fraction of Linear layers that must be quantized to pass coverage
+validation. Default:
+.BR 0.80 .
+.TP
+.B \-\-validate\-zip\-crc
+For
+.B .bin
+shards stored as zip, run zip CRC checks. Slow. Default: off.
+.TP
+.BI \-\-max\-shard\-size " STR"
+Pass through to
+.BR save_pretrained(max_shard_size=...) .
+Unset by default.
+.TP
+.BI \-\-lock\-ttl\-seconds " N"
+Lock TTL for cross-host stale lock handling. Default:
+.B 21600
+(6 hours).
+.TP
+.B \-\-smoke\-test
+After quantization, load the output checkpoint and run a tiny generation
+test.
+.TP
+.BI \-\-smoke\-prompt " STR"
+Prompt text for the smoke test. Default:
+.BR Hello .
+.TP
+.BI \-\-smoke\-max\-new\-tokens " N"
+Tokens to generate in the smoke test. Default:
+.BR 1 .
+.TP
+.BI \-\-smoke\-temperature " F"
+Sampling temperature for the smoke test. Default:
+.BR 0.0 .
+.TP
+.B \-\-json
+JSON output mode. Progress is sent to stderr; a single JSON result object is
+printed on stdout.
+.SH ENVIRONMENT
+.TP
+.B MODEL_CACHE_DIR
+Default cache directory. Overridden by
+.BR \-\-cache\-dir .
+Default:
+.BR ./models .
+.TP
+.B QUANTIZED_OUTPUT_DIR
+Default output directory. Overridden by
+.BR \-\-output\-dir .
+Default: same as cache dir.
+.TP
+.B MIN_TORCH_VERSION
+Minimum required PyTorch version. Default:
+.BR 2.1.0 .
+.TP
+.B MIN_TRANSFORMERS_VERSION
+Minimum required transformers version. Default:
+.BR 4.40.0 .
+.TP
+.B MIN_TORCHAO_VERSION
+Minimum required torchao version. Default:
+.BR 0.10.0 .
+.SH OUTPUT
+Output is written in an HF-cache-like layout:
+.PP
+.RS
+.nf
+$OUTPUT_DIR/hub/models--<model-id><suffix>/
+  refs/main
+  refs/<revision>
+  snapshots/<snapshot-hash>/
+    config.json
+    *.bin (or *.safetensors)
+    tokenizer_config.json
+    tokenizer.json (or tokenizer.model)
+    quantize_meta.json
+.fi
+.RE
+.PP
+.B config.json
+is patched with
+.B quant_method
+and
+.B quant_type
+fields for vLLM compatibility.
+.B quantize_meta.json
+records source model, versions, quantization config, and runtime metadata.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or output already exists.
+.TP
+.B 1
+Error from the bash layer. The
+.B die()
+handler exits 1 for all shell-level errors: unknown options, missing
+model-id, CUDA/VRAM unavailable, lock contention, disk space, offline
+mode failures. Also returned by Python for unhandled exceptions (e.g.,
+quant coverage
+.B RuntimeError
+).
+.TP
+.B 2
+Python preflight or validation error: missing dependencies, version too old,
+invalid numeric flag values, structural validation failure (missing
+config.json, missing weight files).
+.TP
+.B 4
+API error (hub commit resolution returned no sha).
+.SH EXAMPLES
+Quantize a model with defaults (offline, auto device):
+.PP
+.RS
+.nf
+quantize-fp8 meta-llama/Llama-3.1-8B
+.fi
+.RE
+.PP
+Quantize with online access and smoke test:
+.PP
+.RS
+.nf
+quantize-fp8 --online --smoke-test meta-llama/Llama-3.1-8B
+.fi
+.RE
+.PP
+Quantize to safetensors format with JSON output:
+.PP
+.RS
+.nf
+quantize-fp8 --json --allow-safetensors \\
+  meta-llama/Llama-3.1-70B
+.fi
+.RE
+.PP
+Force rebuild with custom shard size:
+.PP
+.RS
+.nf
+quantize-fp8 --force --max-shard-size 2GB \\
+  -r abc123def456... meta-llama/Llama-3.1-8B
+.fi
+.RE
+.SH SEE ALSO
+.BR quantize-awq (1),
+.BR quantize-llmc (1),
+.BR list-models (1)

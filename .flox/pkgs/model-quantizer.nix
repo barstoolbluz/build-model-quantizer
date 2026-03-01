@@ -1,0 +1,42 @@
+{ stdenv, lib, gzip }:
+
+let
+  version = "0.1.0";
+  buildRevision = "1";
+  buildNotes = ''
+    Initial packaging of scripts and man pages.
+  '';
+in
+stdenv.mkDerivation {
+  pname = "model-quantizer";
+  inherit version;
+  src = ../../.;
+
+  nativeBuildInputs = [ gzip ];
+
+  dontBuild = true;
+
+  installPhase = ''
+    mkdir -p $out/bin $out/share/man/man1 $out/share/doc/model-quantizer \
+             $out/share/model-quantizer
+
+    for script in scripts/*.sh; do
+      name=$(basename "$script" .sh)
+      cp "$script" "$out/bin/$name"
+      chmod +x "$out/bin/$name"
+    done
+
+    for page in man/*.1; do
+      gzip -c "$page" > "$out/share/man/man1/$(basename "$page").gz"
+    done
+
+    cp README.md $out/share/doc/model-quantizer/
+
+    printf '%s\n' "${buildNotes}" > "$out/share/model-quantizer/BUILD-${version}-r${buildRevision}"
+  '';
+
+  meta = with lib; {
+    description = "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)";
+    platforms = [ "x86_64-linux" "aarch64-linux" ];
+  };
+}
