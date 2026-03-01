@@ -26,6 +26,9 @@ stdenv.mkDerivation {
       chmod +x "$out/bin/$name"
     done
 
+    cp scripts/setup-venv "$out/bin/setup-venv"
+    chmod +x "$out/bin/setup-venv"
+
     for page in man/*.1; do
       gzip -c "$page" > "$out/share/man/man1/$(basename "$page").gz"
     done
