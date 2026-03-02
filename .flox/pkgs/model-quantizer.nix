@@ -2,9 +2,10 @@
 
 let
   version = "0.1.0";
-  buildRevision = "1";
+  buildRevision = "2";
   buildNotes = ''
-    Initial packaging of scripts and man pages.
+    Add setup-venv script to package.
+    Fix usage output for all quantize scripts (print comment header, not raw source).
   '';
 in
 stdenv.mkDerivation {
