@@ -1,8 +1,8 @@
 { stdenv, lib, gzip }:
 
 let
-  version = "0.1.0";
-  buildRevision = "2";
+  version = "0.2.0";
+  buildRevision = "1";
   buildNotes = ''
     Add setup-venv script to package.
     Fix usage output for all quantize scripts (print comment header, not raw source).
