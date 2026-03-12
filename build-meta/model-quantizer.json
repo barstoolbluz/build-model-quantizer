@@ -1,0 +1,7 @@
+{
+  "build_version": 2,
+  "force_increment": 0,
+  "git_rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+  "git_rev_short": "6fa3d3a",
+  "changelog": "Adopt flox-build-version marker pattern from build-triton-server."
+}

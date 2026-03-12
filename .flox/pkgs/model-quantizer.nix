@@ -1,12 +1,11 @@
 { stdenv, lib, gzip }:
 
 let
-  version = "0.2.0";
-  buildRevision = "1";
-  buildNotes = ''
-    Add setup-venv script to package.
-    Fix usage output for all quantize scripts (print comment header, not raw source).
-  '';
+  version = "0.9.1";
+
+  # Build versioning — pre-computed in build-meta/*.json before each build
+  buildMeta = builtins.fromJSON (builtins.readFile ../../build-meta/model-quantizer.json);
+  buildVersion = buildMeta.build_version;
 in
 stdenv.mkDerivation {
   pname = "model-quantizer";
@@ -36,7 +35,14 @@ stdenv.mkDerivation {
 
     cp README.md $out/share/doc/model-quantizer/
 
-    printf '%s\n' "${buildNotes}" > "$out/share/model-quantizer/BUILD-${version}-r${buildRevision}"
+    cat > $out/share/model-quantizer/flox-build-version-${toString buildVersion} <<'MARKER'
+build-version: ${toString buildVersion}
+version: ${version}
+git-rev: ${buildMeta.git_rev}
+git-rev-short: ${buildMeta.git_rev_short}
+force-increment: ${toString buildMeta.force_increment}
+changelog: ${buildMeta.changelog}
+MARKER
   '';
 
   meta = with lib; {
