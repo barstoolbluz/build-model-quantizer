@@ -15,7 +15,7 @@ Running `flox activate` does the following:
 2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ and FP8/torchao (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches) and [FP8 Compatibility Patches](#fp8-compatibility-patches))
-5. Exposes `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` as shell functions
+5. Provides `quantize-awq`, `quantize-fp8-local`, `quantize-fp8-production`, `quantize-llmc-local`, `quantize-llmc-production`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -43,13 +43,13 @@ flox activate
 quantize-awq Qwen/Qwen3-8B
 
 # FP8 via torchao (native Hopper/Blackwell, ~2x smaller)
-quantize-fp8 Qwen/Qwen3-8B
+quantize-fp8-local Qwen/Qwen3-8B
 
 # LLM Compressor -- FP8 dynamic (data-free, compressed-tensors for vLLM)
-quantize-llmc Qwen/Qwen3-8B
+quantize-llmc-local Qwen/Qwen3-8B
 
 # LLM Compressor -- W4A16 GPTQ (calibration-based)
-quantize-llmc Qwen/Qwen3-8B gptq --online
+quantize-llmc-local Qwen/Qwen3-8B gptq --online
 
 # List cached source and quantized models
 list-models
@@ -77,7 +77,7 @@ MODEL_CACHE_DIR=/data/models flox activate
 - Idempotent: re-running with the same parameters skips quantization if output already exists
 - Concurrent-safe: file-level locking prevents races when multiple quantization jobs target the same output directory
 - Smoke tests: optional forward pass and token generation on quantized output to verify correctness before publishing
-- JSON output mode: machine-readable status for pipeline integration (`--json` on all three scripts)
+- JSON output mode: machine-readable status for pipeline integration (`--json` on all quantization scripts)
 - Checksum manifests (AWQ): opt-in SHA-256 checksums for all output files
 - CI-ready: same Flox environment in local dev and CI, with GitHub Actions support (see [CI / Pipeline Usage](#ci--pipeline-usage))
 - Auto-provisioned Python venv with PyPI packages on first activation
@@ -108,65 +108,100 @@ quantize-awq --smoke-test off Qwen/Qwen3-8B
 
 Output model is saved as `<model-id>-AWQ` in the cache directory.
 
-### FP8 via torchao (`quantize-fp8`)
+### FP8 via torchao (`quantize-fp8-local` / `quantize-fp8-production`)
 
 Uses [torchao](https://github.com/pytorch/ao) to convert BF16 weights to FP8 E4M3 (weight-only, data-free). Native hardware support on Hopper (SM90) and Blackwell (SM120). ~2x compression with near-zero quality loss.
 
+Two variants are provided:
+
+- **`quantize-fp8-local`** — fast, lightweight. Basic output validation. Best for local development and quick iteration.
+- **`quantize-fp8-production`** — adds `--json-strict` for structured JSON on both success and error, `--reload-validate-device` for reload validation, `--lock-mode`/`--lock-timeout` for stronger locking, and stage-based error tracking. Best for CI, serving pipelines, and long-term artifact storage.
+
+Both share the same CLI interface and output layout. The production variant adds extra options (see [FP8 Options](#fp8-torchao-options)).
+
+**When to choose:** Use `quantize-fp8-local` when iterating on FP8 quantization or testing new models. Use `quantize-fp8-production` when the output will be served in production, stored as a build artifact, or generated in CI where you need structured error reporting and artifact integrity guarantees.
+
 ```bash
 # Default: offline, auto device selection
-quantize-fp8 Qwen/Qwen3-8B
+quantize-fp8-local Qwen/Qwen3-8B
 
 # Force rebuild, run smoke test after
-quantize-fp8 --force --smoke-test Qwen/Qwen3-8B
+quantize-fp8-local --force --smoke-test Qwen/Qwen3-8B
 
 # Safetensors output (experimental)
-quantize-fp8 --allow-safetensors Qwen/Qwen3-8B
+quantize-fp8-local --allow-safetensors Qwen/Qwen3-8B
 
 # Custom shard size for large models
-quantize-fp8 --max-shard-size 4GB Qwen/Qwen3-8B
+quantize-fp8-local --max-shard-size 4GB Qwen/Qwen3-8B
 
 # JSON output for scripting
-quantize-fp8 --json Qwen/Qwen3-8B
+quantize-fp8-local --json Qwen/Qwen3-8B
+
+# Production: validated output with strict JSON errors
+quantize-fp8-production --json Qwen/Qwen3-8B
+
+# Production: reload validation on CPU
+quantize-fp8-production --json-strict --reload-validate-device cpu Qwen/Qwen3-8B
 ```
 
 Output model is saved as `<model-id>-FP8-TORCHAO` in the cache directory.
 
-### LLM Compressor (`quantize-llmc`)
+### LLM Compressor (`quantize-llmc-local` / `quantize-llmc-production`)
 
 Uses [llm-compressor](https://github.com/vllm-project/llm-compressor) (vLLM project) for unified quantization. Produces `compressed-tensors` format loaded natively by vLLM without format conversion.
 
 | Scheme | Command | Calibration | Output Suffix |
 |--------|---------|-------------|---------------|
-| FP8 dynamic | `quantize-llmc <model>` | No (data-free) | `-FP8-DYNAMIC` |
-| FP8 block | `quantize-llmc <model> fp8 --fp8-scheme block` | No (data-free) | `-FP8-BLOCK` |
-| W4A16 GPTQ | `quantize-llmc <model> gptq` | Yes | `-W4A16-GPTQ` |
-| W8A8 SmoothQuant | `quantize-llmc <model> w8a8` | Yes | `-W8A8-SMOOTHQUANT` |
-| NVFP4 | `quantize-llmc <model> nvfp4` | Yes | `-NVFP4` |
+| FP8 dynamic | `quantize-llmc-local <model>` | No (data-free) | `-FP8-DYNAMIC` |
+| FP8 block | `quantize-llmc-local <model> fp8 --fp8-scheme block` | No (data-free) | `-FP8-BLOCK` |
+| W4A16 GPTQ | `quantize-llmc-local <model> gptq` | Yes | `-W4A16-GPTQ` |
+| W8A8 SmoothQuant | `quantize-llmc-local <model> w8a8` | Yes | `-W8A8-SQ-GPTQ` |
+| NVFP4 | `quantize-llmc-local <model> nvfp4` | Yes | `-NVFP4` |
+
+Two variants are provided:
+
+- **`quantize-llmc-local`** — fast, lightweight. Best for local development and quick iteration.
+- **`quantize-llmc-production`** — adds strict shell mode with ERR traps, stage-based error tracking
+  via `--json-strict`, artifact manifests with SHA-256 checksums, atomic publish from temp dir, and
+  extended output validation. Best for CI, serving pipelines, and long-term artifact storage.
+
+Both share the same CLI interface and output layout. The production variant adds `--json-strict`.
+
+**When to choose:** Use `quantize-llmc-local` when iterating on quantization schemes or testing new
+models. Use `quantize-llmc-production` when the output will be served in production, stored as a
+build artifact, or generated in CI where you need structured error reporting and artifact integrity
+guarantees.
 
 ```bash
 # FP8 dynamic (default, data-free, no network needed)
-quantize-llmc Qwen/Qwen3-8B
+quantize-llmc-local Qwen/Qwen3-8B
 
 # W4A16 GPTQ with custom calibration parameters
-quantize-llmc Qwen/Qwen3-8B gptq --online --num-samples 1024 --seq-length 4096
+quantize-llmc-local Qwen/Qwen3-8B gptq --online --num-samples 1024 --seq-length 4096
 
 # W8A8 SmoothQuant
-quantize-llmc Qwen/Qwen3-8B w8a8 --online
+quantize-llmc-local Qwen/Qwen3-8B w8a8 --online
 
 # NVFP4 (Blackwell-native)
-quantize-llmc Qwen/Qwen3-8B nvfp4 --online
+quantize-llmc-local Qwen/Qwen3-8B nvfp4 --online
 
 # Validate output by loading in vLLM and running generation
-quantize-llmc Qwen/Qwen3-8B --validate --validate-prompt "Explain gravity."
+quantize-llmc-local Qwen/Qwen3-8B --validate --validate-prompt "Explain gravity."
 
 # Use a local calibration dataset
-quantize-llmc Qwen/Qwen3-8B gptq --dataset-path ./calibration.jsonl --text-column content
+quantize-llmc-local Qwen/Qwen3-8B gptq --dataset-path ./calibration.jsonl --text-column content
 
 # Sequential pipeline for large models that exceed GPU memory
-quantize-llmc Qwen/Qwen3-32B gptq --online --pipeline sequential
+quantize-llmc-local Qwen/Qwen3-32B gptq --online --pipeline sequential
 
 # JSON output for scripting
-quantize-llmc --json Qwen/Qwen3-8B
+quantize-llmc-local --json Qwen/Qwen3-8B
+
+# Production: validated output with artifact manifest
+quantize-llmc-production --json Qwen/Qwen3-8B
+
+# Production: strict JSON errors
+quantize-llmc-production --json-strict Qwen/Qwen3-8B gptq --online
 ```
 
 Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The default is `open_platypus`. Pass `--online` if the dataset is not already cached.
@@ -267,8 +302,11 @@ These are set in the `[vars]` section of `.flox/env/manifest.toml` and apply to 
 
 The FP8 script uses CLI flags for most configuration. It also respects `MODEL_CACHE_DIR` and `QUANTIZED_OUTPUT_DIR` (see Global Environment Variables above) and three version-gate env vars: `MIN_TORCH_VERSION` (default: `2.1.0`), `MIN_TRANSFORMERS_VERSION` (default: `4.40.0`), `MIN_TORCHAO_VERSION` (default: `0.10.0`).
 
+Both `quantize-fp8-local` and `quantize-fp8-production` share this core interface:
+
 ```
-quantize-fp8 <model-id> [options]
+quantize-fp8-local <model-id> [options]
+quantize-fp8-production <model-id> [options]
 
   -c, --cache-dir DIR           HF cache root
   -o, --output-dir DIR          Output root
@@ -294,10 +332,22 @@ quantize-fp8 <model-id> [options]
       --json                    JSON output on stdout (logs to stderr)
 ```
 
-### LLM Compressor Options
+`quantize-fp8-production` adds:
 
 ```
-quantize-llmc <model-id> [scheme] [options]
+      --json-strict                Like --json, and all failures also emit JSON to stdout
+      --reload-validate-device DEV cpu|skip (default: cpu)
+      --lock-mode MODE             auto|fd|mkdir (default: auto)
+      --lock-timeout N             Lock wait seconds (0=fail-fast, -1=unlimited, default: 0)
+```
+
+### LLM Compressor Options
+
+Both `quantize-llmc-local` and `quantize-llmc-production` share this core interface:
+
+```
+quantize-llmc-local <model-id> [scheme] [options]
+quantize-llmc-production <model-id> [scheme] [options]
 
 Schemes: fp8 (default), gptq, w8a8, nvfp4
 
@@ -351,16 +401,22 @@ General:
   --json                   JSON output on stdout (logs to stderr)
 ```
 
+`quantize-llmc-production` adds:
+
+```
+      --json-strict           Emit structured JSON on errors (not just success)
+```
+
 
 ## Advanced Features
 
 ### Locking
 
-All three scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC script uses the same pattern with `--lock-timeout`.
+All five quantization scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC scripts use `flock` with `--lock-timeout`.
 
 ### Fingerprinting
 
-All three scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. Identical configurations always produce the same output path.
+All five quantization scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. Identical configurations always produce the same output path.
 
 ### Determinism
 
@@ -374,7 +430,7 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 
 ### JSON Mode
 
-All three scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. Successful runs (`ok`) include timing.
+All five quantization scripts support `--json` for machine-readable output on stdout (logs go to stderr); `list-models` does not support `--json`. Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC local includes scheme, validation status, output size, and timestamp. LLMC production adds `--json-strict` for structured JSON on both success and error, with stage-based error tracking. Both production variants (`quantize-fp8-production` and `quantize-llmc-production`) support `--json-strict`. Successful runs (`ok`) include timing.
 
 
 ## CI / Pipeline Usage
@@ -385,7 +441,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-Note: the convenience commands (`quantize-fp8`, `quantize-llmc`, etc.) are shell functions defined in `[profile]` and are only available in interactive sessions (`flox activate`). In CI and non-interactive contexts (`flox activate -- <cmd>`), call the scripts directly:
+The commands (`quantize-fp8-local`, `quantize-fp8-production`, `quantize-llmc-local`, `quantize-llmc-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -398,14 +454,14 @@ jobs:
       - uses: flox/activate-action@v1
         with:
           command: |
-            bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+            quantize-fp8-production --online --json Qwen/Qwen3-8B > result.json
             cat result.json
 ```
 
 For non-GitHub CI (GitLab, CircleCI, Jenkins), install Flox on the runner and use `flox activate --`:
 
 ```bash
-flox activate -- bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+flox activate -- quantize-fp8-production --online --json Qwen/Qwen3-8B > result.json
 ```
 
 ### Key behaviors for automation
@@ -422,12 +478,12 @@ flox activate -- bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > re
 ```bash
 #!/usr/bin/env bash
 # Quantize a list of models, collect results
-# Run inside flox activate, or use: flox activate -- bash this-script.sh
+# Run inside flox activate, or use: flox activate -- bash batch-quantize.sh
 models=(Qwen/Qwen3-8B meta-llama/Llama-3.1-8B-Instruct google/gemma-3-4b-it)
 
 for model in "${models[@]}"; do
   echo "--- $model ---" >&2
-  bash scripts/quantize-llmc.sh --online --json "$model" >> results.jsonl
+  quantize-llmc-local --online --json "$model" >> results.jsonl
 done
 ```
 
