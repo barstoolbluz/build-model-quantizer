@@ -1,7 +1,7 @@
 {
-  "build_version": 2,
+  "build_version": 3,
   "force_increment": 0,
-  "git_rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
-  "git_rev_short": "6fa3d3a",
-  "changelog": "Adopt flox-build-version marker pattern from build-triton-server."
+  "git_rev": "f97ad4993f85d9abae14bb0c71d43d7670eb236e",
+  "git_rev_short": "f97ad49",
+  "changelog": "Add SGLANG_COMPAT=1 tokenizer compatibility shim to all quantize scripts."
 }

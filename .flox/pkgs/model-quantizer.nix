@@ -1,7 +1,7 @@
 { stdenv, lib, gzip }:
 
 let
-  version = "0.9.1";
+  version = "0.9.2";
 
   # Build versioning — pre-computed in build-meta/*.json before each build
   buildMeta = builtins.fromJSON (builtins.readFile ../../build-meta/model-quantizer.json);
