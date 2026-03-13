@@ -97,6 +97,7 @@ JSON_MODE=0
 MIN_TORCH_VERSION="${MIN_TORCH_VERSION:-2.1.0}"
 MIN_TRANSFORMERS_VERSION="${MIN_TRANSFORMERS_VERSION:-4.40.0}"
 MIN_TORCHAO_VERSION="${MIN_TORCHAO_VERSION:-0.10.0}"
+SGLANG_COMPAT="${SGLANG_COMPAT:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -774,7 +775,7 @@ fi
 mkdir -p "$TMP_SNAPSHOT_PATH"
 
 export OUTPUT_SNAPSHOT_TMP="$TMP_SNAPSHOT_PATH"
-export CACHE_DIR MODEL_ID REVISION SOURCE_SNAPSHOT_ID RESOLVED_COMMIT ONLINE TRUST_REMOTE_CODE DEVICE_MODE OUT_FORMAT ALLOW_SAFETENSORS DO_VALIDATE_QUANT QUANT_MIN_RATIO MAX_SHARD_SIZE JSON_MODE
+export CACHE_DIR MODEL_ID REVISION SOURCE_SNAPSHOT_ID RESOLVED_COMMIT ONLINE TRUST_REMOTE_CODE DEVICE_MODE OUT_FORMAT ALLOW_SAFETENSORS DO_VALIDATE_QUANT QUANT_MIN_RATIO MAX_SHARD_SIZE JSON_MODE SGLANG_COMPAT
 export HF_HOME="$CACHE_DIR"
 export HF_HUB_CACHE="$CACHE_DIR/hub"
 QUANT_START_EPOCH=$(date +%s)
@@ -974,6 +975,18 @@ if max_shard_size:
 
 model.save_pretrained(out_dir, state_dict=unwrapped, **save_kwargs)
 tok.save_pretrained(out_dir)
+
+# ── SGLANG_COMPAT: rewrite TokenizersBackend → PreTrainedTokenizerFast ──
+if os.environ.get("SGLANG_COMPAT") == "1":
+    _tc_path = os.path.join(out_dir, "tokenizer_config.json")
+    if os.path.isfile(_tc_path):
+        with open(_tc_path, "r", encoding="utf-8") as _f:
+            _tc = json.load(_f)
+        if _tc.get("tokenizer_class") == "TokenizersBackend":
+            _tc["tokenizer_class"] = "PreTrainedTokenizerFast"
+            with open(_tc_path, "w", encoding="utf-8") as _f:
+                json.dump(_tc, _f, indent=2, ensure_ascii=False)
+            print("SGLANG_COMPAT: rewrote tokenizer_class TokenizersBackend -> PreTrainedTokenizerFast", file=out)
 
 cfg_path = os.path.join(out_dir, "config.json")
 try:

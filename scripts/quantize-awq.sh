@@ -131,6 +131,7 @@ REVISION="${MODEL_REVISION:-main}"
 HF_OFFLINE="${HF_OFFLINE:-1}"
 TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-0}"
 FORCE_REQUANTIZE="${FORCE_REQUANTIZE:-0}"
+SGLANG_COMPAT="${SGLANG_COMPAT:-0}"
 SHOW_SIZES="${SHOW_SIZES:-0}"
 PYTHON="${PYTHON:-python3}"
 
@@ -165,7 +166,7 @@ if [[ -n "${AWQ_CALIB_SEQ_LEN:-}" && -z "${AWQ_MAX_CALIB_SEQ_LEN:-}" ]]; then
 fi
 
 # Validate boolean-ish vars
-for b in HF_OFFLINE TRUST_REMOTE_CODE FORCE_REQUANTIZE SHOW_SIZES REQUIRE_CUDA WRITE_LOCAL_REPO_LAYOUT \
+for b in HF_OFFLINE TRUST_REMOTE_CODE FORCE_REQUANTIZE SGLANG_COMPAT SHOW_SIZES REQUIRE_CUDA WRITE_LOCAL_REPO_LAYOUT \
          DETERMINISTIC DETERMINISTIC_FAIL_CLOSED QUANT_SAFETENSORS WRITE_CHECKSUMS WRITE_WEIGHT_CHECKSUMS \
          FINGERPRINT_INCLUDE_VERS FINGERPRINT_INCLUDE_SYS ALLOW_REMOTE_STALE; do
   v="${!b}"
@@ -749,6 +750,7 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONHASHSEED="$QUANT_SEED"
 export HF_HOME="$CACHE_DIR"
 export HF_HUB_CACHE="$CACHE_DIR/hub"
+export SGLANG_COMPAT
 
 # --------------------------
 # Quantize + save + validate
@@ -1013,6 +1015,18 @@ os.makedirs(out_dir, exist_ok=True)
 # Fail-closed save: if these args are unsupported, error out.
 model.save_quantized(out_dir, safetensors=save_safetensors, shard_size=shard_size)
 tokenizer.save_pretrained(out_dir)
+
+# ── SGLANG_COMPAT: rewrite TokenizersBackend → PreTrainedTokenizerFast ──
+if os.environ.get("SGLANG_COMPAT") == "1":
+    _tc_path = os.path.join(out_dir, "tokenizer_config.json")
+    if os.path.isfile(_tc_path):
+        with open(_tc_path, "r", encoding="utf-8") as _f:
+            _tc = json.load(_f)
+        if _tc.get("tokenizer_class") == "TokenizersBackend":
+            _tc["tokenizer_class"] = "PreTrainedTokenizerFast"
+            with open(_tc_path, "w", encoding="utf-8") as _f:
+                json.dump(_tc, _f, indent=2, ensure_ascii=False)
+            print("SGLANG_COMPAT: rewrote tokenizer_class TokenizersBackend -> PreTrainedTokenizerFast", file=sys.stderr)
 
 # Fingerprint must match expected snapshot id
 with open(fingerprint_path, "r", encoding="utf-8") as f:

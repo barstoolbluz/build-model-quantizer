@@ -768,6 +768,7 @@ SMOKE_TEST=0
 SMOKE_PROMPT="Hello"
 SMOKE_MAX_NEW_TOKENS="1"
 SMOKE_TEMPERATURE="0.0"
+SGLANG_COMPAT="${SGLANG_COMPAT:-0}"
 MODEL_ID=""
 
 while [[ $# -gt 0 ]]; do
@@ -1496,6 +1497,16 @@ def main():
     model.save_pretrained(out_dir, state_dict=unwrapped, **save_kwargs)
     if tok is not None:
         tok.save_pretrained(out_dir)
+    # ── SGLANG_COMPAT: rewrite TokenizersBackend → PreTrainedTokenizerFast ──
+    if os.environ.get("SGLANG_COMPAT") == "1":
+        _tc_path = out_dir / "tokenizer_config.json"
+        if _tc_path.is_file():
+            _tc = json.loads(_tc_path.read_text(encoding="utf-8"))
+            if _tc.get("tokenizer_class") == "TokenizersBackend":
+                _tc["tokenizer_class"] = "PreTrainedTokenizerFast"
+                _tc_path.write_text(json.dumps(_tc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                jlog(level="info", event="sglang_compat", action="rewrite_tokenizer_class",
+                     old="TokenizersBackend", new="PreTrainedTokenizerFast")
     cfg.save_pretrained(out_dir)
 
     post_save_checks = DO_VALIDATE or SMOKE_TEST
@@ -1604,6 +1615,7 @@ export Q_SMOKE_MAX_NEW_TOKENS="$SMOKE_MAX_NEW_TOKENS"
 export Q_SMOKE_TEMPERATURE="$SMOKE_TEMPERATURE"
 export Q_FINGERPRINT_JSON="$FINGERPRINT_JSON"
 export Q_FINGERPRINT_SHA256="$FINGERPRINT_SHA256"
+export SGLANG_COMPAT
 
 python3 "$WORKDIR/quantize_fp8.py"
 

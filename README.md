@@ -266,6 +266,7 @@ These are set in the `[vars]` section of `.flox/env/manifest.toml` and apply to 
 | `MODEL_CACHE_DIR` | `$FLOX_ENV_PROJECT/hub` | HuggingFace cache root (contains `hub/models--*/`) |
 | `QUANTIZED_OUTPUT_DIR` | `$FLOX_ENV_PROJECT/hub` | Output root for quantized models |
 | `WRITE_LOCAL_REPO_LAYOUT` | `1` | Write HF hub cache layout for vLLM auto-discovery |
+| `SGLANG_COMPAT` | `0` | Rewrite `TokenizersBackend` → `PreTrainedTokenizerFast` in output tokenizer_config.json (for SGLang <0.6 compatibility) |
 
 ### AWQ Environment Variables
 
@@ -528,6 +529,22 @@ The FP8 quantization scripts (`quantize-fp8-local.sh`, `quantize-fp8-production.
 6. **Float8Tensor unwrapping**: Before calling `save_pretrained()`, the script extracts `.qdata` and `.scale` from each Float8Tensor into plain tensors (with `_scale` suffix for scales), then passes the unwrapped state dict via `state_dict=unwrapped`. This bypasses all remaining serialization issues.
 
 7. **Validation safetensors fallback** (local script only): Transformers 5.x always saves as safetensors regardless of the `safe_serialization` flag. The validation step now checks for `.safetensors` files as a fallback when `out_format="torch"` and no `.bin` files are found. The production script's `validate_saved_artifacts()` already checks both formats.
+
+
+## SGLang Tokenizer Compatibility (`SGLANG_COMPAT=1`)
+
+Models quantized with transformers ≥4.58 write `"tokenizer_class": "TokenizersBackend"` into
+`tokenizer_config.json`. SGLang 0.5.9 bundles transformers 4.57.6, which does not recognize
+this class and fails at startup.
+
+When `SGLANG_COMPAT=1` is set, all three quantize scripts (`quantize-fp8-local`,
+`quantize-fp8-production`, `quantize-awq`) post-process the saved `tokenizer_config.json`:
+if `tokenizer_class` is `"TokenizersBackend"`, it is rewritten to `"PreTrainedTokenizerFast"`.
+This is safe because `TokenizersBackend` inherits from `PreTrainedTokenizerFast` and both
+load `tokenizer.json` identically.
+
+**Removal**: Remove this shim once SGLang ships transformers ≥4.58 (where `TokenizersBackend`
+is natively recognized). Track: SGLang release notes, `sglang-runtime` manifest version.
 
 
 ## Packages
