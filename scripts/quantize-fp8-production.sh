@@ -1470,13 +1470,30 @@ def main():
             f"({quant_after}/{total_after} Linear layers quantized)"
         )
 
+    # Unwrap TorchAO tensor subclasses (e.g. Float8Tensor) into raw tensors
+    # so that safetensors can serialize them.  Float8Tensor stores quantized
+    # data in .qdata (float8_e4m3fn) and per-row scales in .scale (float32).
+    raw_state_dict = model.state_dict()
+    unwrapped = {}
+    _has_fp8 = False
+    for _k, _v in raw_state_dict.items():
+        if hasattr(_v, 'qdata') and hasattr(_v, 'scale'):
+            _has_fp8 = True
+            unwrapped[_k] = _v.qdata.contiguous()
+            unwrapped[_k + "_scale"] = _v.scale.contiguous()
+        elif isinstance(_v, torch.Tensor):
+            unwrapped[_k] = _v.contiguous()
+        else:
+            unwrapped[_k] = _v
+    if _has_fp8:
+        jlog(level="info", event="fp8_unwrap", count=sum(1 for k in unwrapped if k.endswith('_scale')))
+
     save_kwargs = {}
     if MAX_SHARD_SIZE:
         save_kwargs["max_shard_size"] = MAX_SHARD_SIZE
-    save_kwargs["safe_serialization"] = (OUT_FORMAT == "safetensors")
 
     jlog(level="info", event="save_begin", out_dir=str(out_dir), format=OUT_FORMAT)
-    model.save_pretrained(out_dir, **save_kwargs)
+    model.save_pretrained(out_dir, state_dict=unwrapped, **save_kwargs)
     if tok is not None:
         tok.save_pretrained(out_dir)
     cfg.save_pretrained(out_dir)

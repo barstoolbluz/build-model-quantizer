@@ -65,5 +65,124 @@ if grep -q 'simplefilter.*DeprecationWarning' "$_awq_init"; then
   sed -i '/simplefilter.*DeprecationWarning/d; /warnings\.warn(_FINAL_DEV_MESSAGE/d' "$_awq_init"
 fi
 
+# ── FP8 compat patches (torchao Float8Tensor + safetensors 0.7.0 + transformers 5.3.0) ──
+
+# FP8 compat patch 1: safetensors storage_ptr — return id(tensor) instead of 0
+# for tensor subclasses that don't support storage().data_ptr()
+_st_torch="$VENV_DIR/lib/python3.13/site-packages/safetensors/torch.py"
+if grep -q 'return 0' "$_st_torch" 2>/dev/null; then
+  sed -i 's/except NotImplementedError:/except (NotImplementedError, RuntimeError):/' "$_st_torch"
+  sed -i 's/# Fallback for meta storage/# Fallback for meta storage and tensor subclasses (e.g. TorchAO FP8)./' "$_st_torch"
+  sed -i 's/return 0/return id(tensor)/' "$_st_torch"
+fi
+
+# FP8 compat patch 2: safetensors _end_ptr — wrap in try/except for tensor subclasses
+if ! grep -q 'RuntimeError, AssertionError, KeyError' "$_st_torch" 2>/dev/null; then
+  python3 -c "
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+old = '''def _end_ptr(tensor: torch.Tensor) -> int:
+    if tensor.nelement():
+        stop = tensor.view(-1)[-1].data_ptr() + _SIZE[tensor.dtype]
+    else:
+        stop = tensor.data_ptr()
+    return stop'''
+new = '''def _end_ptr(tensor: torch.Tensor) -> int:
+    try:
+        if tensor.nelement():
+            stop = tensor.view(-1)[-1].data_ptr() + _SIZE[tensor.dtype]
+        else:
+            stop = tensor.data_ptr()
+    except (RuntimeError, AssertionError, KeyError):
+        # Tensor subclasses (e.g. TorchAO FP8) may not support view(-1) or data_ptr()
+        stop = id(tensor)
+    return stop'''
+if old not in src:
+    print(f'WARNING: safetensors _end_ptr patch target not found (already patched or API changed)', file=sys.stderr)
+    sys.exit(0)
+p.write_text(src.replace(old, new))
+print('Patched safetensors _end_ptr')
+" "$_st_torch"
+fi
+
+# FP8 compat patch 3: transformers _end_ptr — wrap in try/except for tensor subclasses
+_tf_modeling="$VENV_DIR/lib/python3.13/site-packages/transformers/modeling_utils.py"
+if ! grep -q 'TorchAO FP8.*may not support view' "$_tf_modeling" 2>/dev/null; then
+  python3 -c "
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+old = '''def _end_ptr(tensor: torch.Tensor) -> int:
+    # extract the end of the pointer if the tensor is a slice of a bigger tensor
+    if tensor.nelement():
+        stop = tensor.view(-1)[-1].data_ptr() + tensor.element_size()
+    else:
+        stop = tensor.data_ptr()
+    return stop'''
+new = '''def _end_ptr(tensor: torch.Tensor) -> int:
+    # extract the end of the pointer if the tensor is a slice of a bigger tensor
+    try:
+        if tensor.nelement():
+            stop = tensor.view(-1)[-1].data_ptr() + tensor.element_size()
+        else:
+            stop = tensor.data_ptr()
+    except (RuntimeError, AssertionError):
+        # Tensor subclasses (e.g., TorchAO FP8) may not support view(-1) or data_ptr().
+        # Use id(tensor) as a unique sentinel so no false sharing is detected.
+        stop = id(tensor)
+    return stop'''
+if old not in src:
+    print(f'WARNING: transformers _end_ptr patch target not found', file=sys.stderr)
+    sys.exit(0)
+p.write_text(src.replace(old, new))
+print('Patched transformers _end_ptr')
+" "$_tf_modeling"
+fi
+
+# FP8 compat patch 4: transformers _find_disjoint — wrap data_ptr() in try/except
+if ! grep -q 'Tensor subclasses without valid data_ptr' "$_tf_modeling" 2>/dev/null; then
+  python3 -c "
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+old = '''            areas.append((tensor.data_ptr(), _end_ptr(tensor), name))
+        areas.sort()'''
+new = '''            try:
+                areas.append((tensor.data_ptr(), _end_ptr(tensor), name))
+            except (RuntimeError, AssertionError):
+                # Tensor subclasses without valid data_ptr — treat as unique
+                areas.append((id(tensor), id(tensor) + 1, name))
+        areas.sort()'''
+if old not in src:
+    print(f'WARNING: transformers _find_disjoint patch target not found', file=sys.stderr)
+    sys.exit(0)
+p.write_text(src.replace(old, new, 1))
+print('Patched transformers _find_disjoint')
+" "$_tf_modeling"
+fi
+
+# FP8 compat patch 5: transformers _find_identical — wrap data_ptr() in try/except
+if ! grep -q 'tensor.device, id(tensor), id(tensor)' "$_tf_modeling" 2>/dev/null; then
+  python3 -c "
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+old = '''            area = (tensor.device, tensor.data_ptr(), _end_ptr(tensor))
+            areas[area].add(name)'''
+new = '''            try:
+                area = (tensor.device, tensor.data_ptr(), _end_ptr(tensor))
+            except (RuntimeError, AssertionError):
+                # Tensor subclasses without valid data_ptr — treat as unique
+                area = (tensor.device, id(tensor), id(tensor) + 1)
+            areas[area].add(name)'''
+if old not in src:
+    print(f'WARNING: transformers _find_identical patch target not found', file=sys.stderr)
+    sys.exit(0)
+p.write_text(src.replace(old, new, 1))
+print('Patched transformers _find_identical')
+" "$_tf_modeling"
+fi
+
 touch "$_marker"
 echo "Done."
